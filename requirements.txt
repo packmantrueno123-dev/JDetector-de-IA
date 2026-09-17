@@ -1,7 +1,8 @@
 fastapi
 uvicorn
 pydantic
-torch --extra-index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.2+cpu
 numpy
 langdetect
 transformers
