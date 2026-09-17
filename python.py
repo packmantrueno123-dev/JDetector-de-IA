@@ -33,7 +33,8 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID)
+# Se añade low_cpu_mem_usage=True para optimizar el consumo de memoria RAM en Render
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, low_cpu_mem_usage=True)
 model.eval()
 
 print("2/4. Inicializando ChromaDB...")
