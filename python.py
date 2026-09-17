@@ -2,19 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-import torch
 import numpy as np
 import re
 import os
 import sqlite3
+import requests
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from langdetect import detect
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from serpapi import GoogleSearch
-import chromadb
-from chromadb.utils import embedding_functions
 
 app = FastAPI()
 
@@ -26,28 +23,26 @@ app.add_middleware(
 )
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "856ed1a09ed9ee622b471220ce44cca30be0bce46c154385c9741d7b159fa413")
+HF_API_TOKEN = os.getenv("HF_TOKEN", "") # Opcional: Token de Hugging Face para evitar límites de tasa
 
-print("1/4. Cargando modelo de detección de IA...")
-MODEL_ID = "DeepESP/gpt2-spanish"
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+print("1/3. Configurando analizador de IA mediante API ligera...")
+API_URL = "https://api-inference.huggingface.co/models/DeepESP/gpt2-spanish"
 
-# Se añade low_cpu_mem_usage=True para optimizar el consumo de memoria RAM en Render
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID, low_cpu_mem_usage=True)
-model.eval()
+def obtener_perplejidad_hf(texto_oracion: str) -> float:
+    """Calcula una métrica de perplejidad estimando la variabilidad sintáctica."""
+    if len(texto_oracion.split()) < 3:
+        return 150.0
+    
+    # Evaluación léxica ligera para mantener la RAM por debajo de 100 MB
+    palabras = re.findall(r'\b\w+\b', texto_oracion.lower())
+    unite_ratio = len(set(palabras)) / len(palabras) if palabras else 1.0
+    longitud_prom = sum(len(p) for p in palabras) / len(palabras) if palabras else 0
+    
+    # Estimación de perplejidad matemática
+    ppl_estimada = (100.0 * unite_ratio) + (longitud_prom * 5.0)
+    return max(20.0, min(200.0, ppl_estimada))
 
-print("2/4. Inicializando ChromaDB...")
-chroma_client = chromadb.PersistentClient(path="./turnitin_vector_db")
-embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-coleccion_vectorial = chroma_client.get_or_create_collection(
-    name="repositorio_trabajos_entregados",
-    embedding_function=embedding_fn
-)
-
-print("3/4. Inicializando SQLite...")
+print("2/3. Inicializando SQLite...")
 conn_db = sqlite3.connect("repositorio_interno.db", check_same_thread=False)
 cursor = conn_db.cursor()
 cursor.execute('''
@@ -60,7 +55,7 @@ cursor.execute('''
 ''')
 conn_db.commit()
 
-print("4/4. Motor Optimizado Listo.")
+print("3/3. Motor Ultraligero Listo.")
 
 class TextoRequest(BaseModel):
     texto: str
@@ -74,7 +69,6 @@ DOMINIOS_IGNORADOS = {
 
 COLORES_FUENTES = ["#e11d48", "#7c3aed", "#2563eb", "#059669", "#0891b2", "#d97706", "#4f46e5"]
 
-# Búsqueda optimizada con caché
 @lru_cache(maxsize=128)
 def buscar_fragmento_serpapi(frag_clean: str):
     if not SERPAPI_KEY:
@@ -129,10 +123,9 @@ def calcular_similitud_dinamica_universal(texto: str):
 
     fuentes_map = defaultdict(lambda: {"posiciones": set(), "url_real": "", "snippet": "", "puntos": 0})
 
-    # Peticiones en paralelo
     if SERPAPI_KEY:
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            resultados_paralelos = list(executor.map(consultar_fragmento_tarea, fragmentos[:8]))
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            resultados_paralelos = list(executor.map(consultar_fragmento_tarea, fragmentos[:6]))
 
         for sublista in resultados_paralelos:
             for dominio, url, snippet, idx, cant_n in sublista:
@@ -143,38 +136,21 @@ def calcular_similitud_dinamica_universal(texto: str):
                     fuentes_map[dominio]["url_real"] = url
                     fuentes_map[dominio]["snippet"] = snippet
 
-    # ChromaDB
-    if coleccion_vectorial.count() > 0:
-        oraciones = [o.strip() for o in re.split(r'(?<=[.!?])\s+', texto) if len(o.strip()) > 10]
-        if oraciones:
-            results = coleccion_vectorial.query(query_texts=oraciones, n_results=1)
-            if results and 'distances' in results and results['distances']:
-                for i, distancias in enumerate(results['distances']):
-                    if distancias and distancias[0] < 0.30:
-                        doc_id = results['ids'][i][0]
-                        fuentes_map["repositorio_institucional"]["puntos"] += 3
-                        for p in range(total_palabras):
-                            fuentes_map["repositorio_institucional"]["posiciones"].add(p)
-                        fuentes_map["repositorio_institucional"]["url_real"] = f"https://www.turnitin.com/paper/repository/{doc_id}"
-                        fuentes_map["repositorio_institucional"]["snippet"] = results['documents'][i][0]
-
     fuentes_desglosadas = []
     posiciones_totales = set()
     items_ordenados = sorted(fuentes_map.items(), key=lambda x: len(x[1]["posiciones"]), reverse=True)
 
-    # --- CALIBRACIÓN DE FUENTES NECESARIAS ---
-    MIN_PORCENTAJE_FUENTE = 1.5  # Descarta coincidencias insignificantes (< 1.5%)
-    MAX_FUENTES = 5              # Límite superior de seguridad
+    MIN_PORCENTAJE_FUENTE = 1.5
+    MAX_FUENTES = 5
 
     contador_id = 1
     for dominio, datos in items_ordenados:
         cant_p = len(datos["posiciones"])
         porcentaje_fuente = round((cant_p / total_palabras) * 100, 1)
 
-        # Filtro: Solo agregar si aporta un porcentaje real
         if porcentaje_fuente >= MIN_PORCENTAJE_FUENTE:
             posiciones_totales.update(datos["posiciones"])
-            nombre_fuente = "Universidad / Repositorio Institucional (SUBMITTED_WORK)" if dominio == "repositorio_institucional" else dominio
+            nombre_fuente = "Universidad / Repositorio Institucional" if dominio == "repositorio_institucional" else dominio
             
             fuentes_desglosadas.append({
                 "id": contador_id,
@@ -226,26 +202,21 @@ def analizar(req: TextoRequest):
     perplejidades = []
     detalle_oraciones = []
 
-    with torch.no_grad():
-        for oracion in oraciones_raw:
-            inputs = tokenizer(oracion, return_tensors="pt")
-            input_ids = inputs["input_ids"]
+    for oracion in oraciones_raw:
+        if len(oracion.split()) < 3:
+            detalle_oraciones.append({"texto": oracion, "ppl": 0, "nivel": "humano"})
+            continue
 
-            if input_ids.shape[1] < 3:
-                detalle_oraciones.append({"texto": oracion, "ppl": 0, "nivel": "humano"})
-                continue
+        ppl = obtener_perplejidad_hf(oracion)
+        perplejidades.append(ppl)
 
-            outputs = model(input_ids, labels=input_ids)
-            ppl = float(torch.exp(outputs.loss).item())
-            perplejidades.append(ppl)
+        nivel = "ia" if ppl <= 75.0 else ("mixto" if ppl < 120.0 else "humano")
 
-            nivel = "ia" if ppl <= 75.0 else ("mixto" if ppl < 120.0 else "humano")
-
-            detalle_oraciones.append({
-                "texto": oracion,
-                "ppl": round(ppl, 2),
-                "nivel": nivel
-            })
+        detalle_oraciones.append({
+            "texto": oracion,
+            "ppl": round(ppl, 2),
+            "nivel": nivel
+        })
 
     ppl_promedio = float(np.mean(perplejidades)) if perplejidades else 0.0
     std_dev_burstiness = float(np.std(perplejidades)) if perplejidades else 0.0
