@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+torch --extra-index-url https://download.pytorch.org/whl/cpu
+numpy
+langdetect
+transformers
+google-search-results
+chromadb
+sentence-transformers
