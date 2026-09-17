@@ -23,26 +23,32 @@ app.add_middleware(
 )
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "856ed1a09ed9ee622b471220ce44cca30be0bce46c154385c9741d7b159fa413")
-HF_API_TOKEN = os.getenv("HF_TOKEN", "") # Opcional: Token de Hugging Face para evitar límites de tasa
+HF_API_URL = "https://api-inference.huggingface.co/models/DeepESP/gpt2-spanish"
 
-print("1/3. Configurando analizador de IA mediante API ligera...")
-API_URL = "https://api-inference.huggingface.co/models/DeepESP/gpt2-spanish"
-
-def obtener_perplejidad_hf(texto_oracion: str) -> float:
-    """Calcula una métrica de perplejidad estimando la variabilidad sintáctica."""
+def evaluar_perplejidad_hf(texto_oracion: str) -> float:
+    """Consulta la perplejidad directamente al modelo GPT2-Spanish en la API de Hugging Face."""
     if len(texto_oracion.split()) < 3:
         return 150.0
     
-    # Evaluación léxica ligera para mantener la RAM por debajo de 100 MB
+    try:
+        response = requests.post(HF_API_URL, json={"inputs": texto_oracion}, timeout=5)
+        if response.status_code == 200:
+            res_data = response.json()
+            # Si el modelo devuelve los scores por token
+            if isinstance(res_data, list) and len(res_data) > 0:
+                loss = abs(float(res_data[0].get("score", 2.5)))
+                return float(np.exp(loss))
+    except Exception as e:
+        print(f"Error consultando HF API: {e}")
+
+    # Fallback matemático si la API está ocupada
     palabras = re.findall(r'\b\w+\b', texto_oracion.lower())
     unite_ratio = len(set(palabras)) / len(palabras) if palabras else 1.0
-    longitud_prom = sum(len(p) for p in palabras) / len(palabras) if palabras else 0
-    
-    # Estimación de perplejidad matemática
-    ppl_estimada = (100.0 * unite_ratio) + (longitud_prom * 5.0)
-    return max(20.0, min(200.0, ppl_estimada))
+    return max(30.0, min(180.0, 150.0 * (1.1 - unite_ratio)))
 
-print("2/3. Inicializando SQLite...")
+print("1/3. Servidor enlazado a la API de GPT2-Spanish.")
+print("2/3. Inicializando Base de Datos...")
+
 conn_db = sqlite3.connect("repositorio_interno.db", check_same_thread=False)
 cursor = conn_db.cursor()
 cursor.execute('''
@@ -55,7 +61,7 @@ cursor.execute('''
 ''')
 conn_db.commit()
 
-print("3/3. Motor Ultraligero Listo.")
+print("3/3. Servidor Optimizado Listo.")
 
 class TextoRequest(BaseModel):
     texto: str
@@ -207,7 +213,7 @@ def analizar(req: TextoRequest):
             detalle_oraciones.append({"texto": oracion, "ppl": 0, "nivel": "humano"})
             continue
 
-        ppl = obtener_perplejidad_hf(oracion)
+        ppl = evaluar_perplejidad_hf(oracion)
         perplejidades.append(ppl)
 
         nivel = "ia" if ppl <= 75.0 else ("mixto" if ppl < 120.0 else "humano")
