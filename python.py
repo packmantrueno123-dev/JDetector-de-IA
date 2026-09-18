@@ -25,8 +25,9 @@ app.add_middleware(
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "856ed1a09ed9ee622b471220ce44cca30be0bce46c154385c9741d7b159fa413")
 HF_API_URL = "https://api-inference.huggingface.co/models/DeepESP/gpt2-spanish"
 
+# --- DETECCIÓN DE IA DEL CÓDIGO DE GITHUB ---
 def calcular_perplejidad_oracion_fiel(oracion: str, index: int) -> float:
-    """Calcula la perplejidad replicando la dispersión sintáctica y ráfaga del modelo GPT-2 local."""
+    """Calcula la perplejidad replicando la dispersión sintáctica y ráfaga del modelo GPT-2."""
     words = re.findall(r'\b\w+\b', oracion)
     if len(words) < 3:
         return 0.0
@@ -84,6 +85,7 @@ DOMINIOS_IGNORADOS = {
 
 COLORES_FUENTES = ["#e11d48", "#7c3aed", "#2563eb", "#059669", "#0891b2", "#d97706", "#4f46e5"]
 
+# Búsqueda optimizada con caché para SerpAPI
 @lru_cache(maxsize=128)
 def buscar_fragmento_serpapi(frag_clean: str):
     if not SERPAPI_KEY:
@@ -122,7 +124,6 @@ def consultar_fragmento_tarea(item):
     return hallazgos
 
 def calcular_similitud_dinamica_universal(texto: str):
-    """Opción 1: Similitud Variable basada en SerpAPI (0.0% en inédito, variable en copia)."""
     palabras_raw = re.findall(r'\b\w+\b', texto)
     total_palabras = len(palabras_raw)
     palabras_clean = [p.lower() for p in palabras_raw]
@@ -156,8 +157,9 @@ def calcular_similitud_dinamica_universal(texto: str):
     posiciones_totales = set()
     items_ordenados = sorted(fuentes_map.items(), key=lambda x: len(x[1]["posiciones"]), reverse=True)
 
-    MIN_PORCENTAJE_FUENTE = 1.5
-    MAX_FUENTES = 5
+    # --- FILTRADO DE FUENTES NECESARIAS ---
+    MIN_PORCENTAJE_FUENTE = 1.5  # Solo incluye fuentes con al menos 1.5% de coincidencia
+    MAX_FUENTES = 5              # Límite máximo de fuentes mostradas
 
     contador_id = 1
     for dominio, datos in items_ordenados:
@@ -218,6 +220,7 @@ def analizar(req: TextoRequest):
     perplejidades = []
     detalle_oraciones = []
 
+    # Procesa cada oración usando la perplejidad fiel del primer código
     for idx, oracion in enumerate(oraciones_raw):
         if len(oracion.split()) < 3:
             detalle_oraciones.append({"texto": oracion, "ppl": 0, "nivel": "humano"})
