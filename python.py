@@ -130,10 +130,13 @@ def calcular_similitud_dinamica_universal(texto: str):
     if total_palabras == 0:
         return 0.0, []
 
-    # Exigir 6 palabras exactas consecutivas para considerar copia real
-    n = 6
+    # Exigir 10 palabras consecutivas exactas para considerar plagio real
+    n = 10
+    if total_palabras < n:
+        return 0.0, []
+
     fragmentos = []
-    for i in range(0, len(palabras_clean) - n + 1, 4):
+    for i in range(0, len(palabras_clean) - n + 1, 6):
         frag_clean = " ".join(palabras_clean[i:i+n])
         frag_orig = " ".join(palabras_raw[i:i+n])
         fragmentos.append((i, frag_clean, frag_orig, n, total_palabras))
@@ -141,8 +144,8 @@ def calcular_similitud_dinamica_universal(texto: str):
     fuentes_map = defaultdict(lambda: {"posiciones": set(), "url_real": "", "snippet": "", "puntos": 0})
 
     if SERPAPI_KEY:
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            resultados_paralelos = list(executor.map(consultar_fragmento_tarea, fragmentos[:8]))
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            resultados_paralelos = list(executor.map(consultar_fragmento_tarea, fragmentos[:5]))
 
         for sublista in resultados_paralelos:
             for dominio, url, snippet, idx, cant_n in sublista:
@@ -157,8 +160,8 @@ def calcular_similitud_dinamica_universal(texto: str):
     posiciones_totales = set()
     items_ordenados = sorted(fuentes_map.items(), key=lambda x: len(x[1]["posiciones"]), reverse=True)
 
-    # Filtro más estricto: Descartar deducciones menores al 5%
-    MIN_PORCENTAJE_FUENTE = 5.0  
+    # Ignorar cualquier deducción web menor al 15% de coincidencia exacta
+    MIN_PORCENTAJE_FUENTE = 15.0  
     MAX_FUENTES = 5
 
     contador_id = 1
