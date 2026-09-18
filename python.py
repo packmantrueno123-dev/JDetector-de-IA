@@ -130,9 +130,10 @@ def calcular_similitud_dinamica_universal(texto: str):
     if total_palabras == 0:
         return 0.0, []
 
-    n = 4
+    # Exigir 6 palabras exactas consecutivas para considerar copia real
+    n = 6
     fragmentos = []
-    for i in range(0, len(palabras_clean) - n + 1, 3):
+    for i in range(0, len(palabras_clean) - n + 1, 4):
         frag_clean = " ".join(palabras_clean[i:i+n])
         frag_orig = " ".join(palabras_raw[i:i+n])
         fragmentos.append((i, frag_clean, frag_orig, n, total_palabras))
@@ -156,7 +157,8 @@ def calcular_similitud_dinamica_universal(texto: str):
     posiciones_totales = set()
     items_ordenados = sorted(fuentes_map.items(), key=lambda x: len(x[1]["posiciones"]), reverse=True)
 
-    MIN_PORCENTAJE_FUENTE = 1.5
+    # Filtro más estricto: Descartar deducciones menores al 5%
+    MIN_PORCENTAJE_FUENTE = 5.0  
     MAX_FUENTES = 5
 
     contador_id = 1
